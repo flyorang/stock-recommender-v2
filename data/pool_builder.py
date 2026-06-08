@@ -207,6 +207,15 @@ def build_krx_pool(force_refresh: bool = False) -> List[PoolStock]:
         if r.get("volume_value", 0) < KRX_MIN_VOLUME_VALUE:
             continue
         
+        # 너무 비싼 종목 제외 (50만원 초과 - 1주 부담)
+        price = r.get("price", 0)
+        if price > 500000:
+            continue
+        
+        # 페니스톡 제외 (천원 미만)
+        if price > 0 and price < 1000:
+            continue
+        
         # 급등 너무 큰 거 제외 (이미 +30%↑)
         if abs(r.get("change_pct", 0)) > 25:
             continue
@@ -257,6 +266,17 @@ def build_us_pool(force_refresh: bool = False) -> List[PoolStock]:
         # 블랙리스트 (대형주)
         if ticker in US_BLACKLIST:
             log.info(f"블랙리스트 제외: {ticker}")
+            continue
+        
+        # 너무 비싼 종목 제외 (1주에 500달러 초과 → 70만원 이상)
+        price = r.get("price", 0)
+        if price > 500:
+            log.info(f"고가 제외: {ticker} (${price:.0f})")
+            continue
+        
+        # 너무 싼 종목도 제외 (페니스톡 위험)
+        if price > 0 and price < 3:
+            log.info(f"저가 제외: {ticker} (${price:.2f})")
             continue
         
         # 1차 필터
