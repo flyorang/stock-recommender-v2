@@ -110,6 +110,17 @@ def _yahoo_most_active(top_n: int) -> List[Dict]:
                 ticker = q.get("symbol", "")
                 if not ticker or "." in ticker or "-" in ticker:
                     continue
+                # ETF 제외 (quoteType이 ETF면)
+                qtype = q.get("quoteType", "")
+                if qtype == "ETF":
+                    continue
+                # 알려진 ETF 티커도 제외
+                etf_tickers = {"SPY", "QQQ", "IWM", "DIA", "VOO", "VTI", "VEA", "VWO",
+                              "TQQQ", "SQQQ", "SOXL", "SOXS", "TLT", "GLD", "SLV",
+                              "ARKK", "XLF", "XLE", "XLK", "XLY", "XLP", "XLV", "XLI",
+                              "EEM", "EFA", "AGG", "BND"}
+                if ticker in etf_tickers:
+                    continue
                 # 미국 거래소만
                 exch = q.get("fullExchangeName", "")
                 if "NYSE" not in exch and "Nasdaq" not in exch and "NASDAQ" not in exch:

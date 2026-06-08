@@ -180,6 +180,14 @@ def build_krx_pool(force_refresh: bool = False) -> List[PoolStock]:
         if ticker in KRX_BLACKLIST:
             continue
         
+        # ETF 제외
+        name = r.get("name", "")
+        etf_keywords = ["KODEX", "TIGER", "ARIRANG", "KBSTAR", "HANARO", "ACE", "SOL", 
+                        "TIMEFOLIO", "PLUS", "RISE", "WOORI", "ETN", "ETF", "레버리지", 
+                        "인버스", "선물", "곱버스"]
+        if any(kw in name for kw in etf_keywords):
+            continue
+        
         # 거래대금 필터 (너무 작은 종목 제외)
         if r.get("volume_value", 0) < KRX_MIN_VOLUME_VALUE:
             continue

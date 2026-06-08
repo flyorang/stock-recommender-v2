@@ -33,6 +33,25 @@ st.set_page_config(
 # ===== CSS (다크모드 기본) =====
 st.markdown("""
 <style>
+/* Streamlit 기본 UI 모바일 숨기기 */
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+[data-testid="stToolbar"] {display: none !important;}
+[data-testid="stDecoration"] {display: none !important;}
+[data-testid="stStatusWidget"] {display: none !important;}
+[data-testid="manage-app-button"] {display: none !important;}
+[data-testid="stSidebarCollapsedControl"] {display: none !important;}
+.stDeployButton {display: none !important;}
+[data-testid="stAppDeployButton"] {display: none !important;}
+button[title="View fullscreen"] {display: none !important;}
+
+/* 모바일에서 사이드바 토글 버튼 숨기기 */
+[data-testid="collapsedControl"] {display: none !important;}
+
+/* 오른쪽 하단 페이지 인디케이터 숨기기 */
+.stAppViewContainer > section > div:last-child > div > div:last-child {display: none !important;}
+
 :root {
   --bg: #0f1115;
   --card: #1a1d24;
@@ -224,7 +243,7 @@ html, body, [class*="st-"], .stApp {
 .info-list.risk li::before { color: var(--danger); }
 
 /* Streamlit 컴포넌트 색 보정 */
-/* 버튼 - 얇은 형광 테두리 */
+/* 버튼 - 깔끔한 미니멀 */
 .stButton, .stButton * {
   outline: 0 !important;
   box-shadow: none !important;
@@ -234,22 +253,21 @@ html, body, [class*="st-"], .stApp {
 }
 .stButton > button {
   background: #1a1d24 !important;
-  color: #00ffaa !important;
-  border: 1px solid #00ffaa !important;
+  color: var(--text) !important;
+  border: 1px solid #2c2f36 !important;
   border-radius: 10px !important;
-  font-weight: 700 !important;
+  font-weight: 600 !important;
   padding: 12px !important;
   width: 100% !important;
   transition: all 0.15s;
 }
 .stButton > button:hover {
-  background: #00ffaa !important;
-  color: #0f1115 !important;
-  border-color: #00ffaa !important;
+  background: #2c2f36 !important;
+  color: white !important;
+  border-color: var(--primary) !important;
 }
 .stButton > button:active {
-  background: #00d68f !important;
-  border-color: #00d68f !important;
+  background: var(--primary) !important;
 }
 [data-testid="stExpander"] {
   background: var(--card) !important;
