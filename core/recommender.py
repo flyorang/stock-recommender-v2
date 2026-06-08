@@ -158,24 +158,40 @@ def recommend_one(
     market: Market,
     held_tickers: Optional[List[str]] = None,
     excluded_tickers: Optional[List[str]] = None,
+    max_retries: int = 3,
 ) -> Optional[Dict[str, Any]]:
-    """시장당 1개 추천.
-    
-    Args:
-        market: KRX or US
-        held_tickers: 이미 보유 중인 종목 (풀에서 제외)
-        excluded_tickers: 추가 제외 종목 (방금 추천된 거 등)
-    
-    Returns:
-        {
-            "stock_info": {...},
-            "quote": {...},
-            "indicators": {...},
-            "agents": {chart, fundamental, ...},
-            "synthesis": {grade, total_score, prices, ...},
-        }
+    """시장당 1개 추천. 관망/회피 시 최대 max_retries번까지 재시도.
     """
     excluded = set((held_tickers or []) + (excluded_tickers or []))
+    tried_tickers = []  # 시도한 종목 추적
+    
+    last_result = None  # 마지막 결과 (전부 실패 시 폴백)
+    
+    for attempt in range(max_retries):
+        result = _recommend_one_attempt(market, excluded | set(tried_tickers))
+        if result is None:
+            continue
+        
+        tried_tickers.append(result["stock_info"]["ticker"])
+        last_result = result
+        
+        grade = result.get("synthesis", {}).get("grade", "")
+        if grade in ("매수", "적극매수"):
+            log.info(f"[{market.value}] ✅ 매수 등급 ({attempt+1}회 시도): {result['stock_info']['name']}")
+            return result
+        else:
+            log.info(f"[{market.value}] 시도 {attempt+1}: {result['stock_info']['name']} = {grade}, 재시도")
+    
+    # 매수 못 찾으면 마지막 결과 반환
+    log.info(f"[{market.value}] {max_retries}회 시도 후 매수 등급 못 찾음, 마지막 결과 반환")
+    return last_result
+
+
+def _recommend_one_attempt(
+    market: Market,
+    excluded: set,
+) -> Optional[Dict[str, Any]]:
+    """1회 추천 시도"""
     
     # 1. 풀 추출
     log.info(f"[{market.value}] 풀 추출 시작")

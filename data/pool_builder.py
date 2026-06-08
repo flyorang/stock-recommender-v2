@@ -180,13 +180,28 @@ def build_krx_pool(force_refresh: bool = False) -> List[PoolStock]:
         if ticker in KRX_BLACKLIST:
             continue
         
-        # ETF 제외
+        # ETF/ETN 강력 필터
         name = r.get("name", "")
-        etf_keywords = ["KODEX", "TIGER", "ARIRANG", "KBSTAR", "HANARO", "ACE", "SOL", 
-                        "TIMEFOLIO", "PLUS", "RISE", "WOORI", "ETN", "ETF", "레버리지", 
-                        "인버스", "선물", "곱버스"]
-        if any(kw in name for kw in etf_keywords):
+        # 1. ETF 운용사 이름
+        etf_brands = [
+            "KODEX", "TIGER", "ARIRANG", "KBSTAR", "HANARO", "ACE", "SOL",
+            "TIMEFOLIO", "PLUS", "RISE", "WOORI", "KOSEF", "KINDEX",
+            "KIWOOM", "MASTER", "FOCUS", "WON", "BNK", "마이다스",
+            "한투", "삼성", "신한", "미래에셋", "키움", "NH",
+        ]
+        # 2. ETF 특성 키워드
+        etf_kw = [
+            "ETN", "ETF", "레버리지", "인버스", "선물", "곱버스",
+            "Fn", "FnGuide", "지수", "인덱스",
+            "2X", "3X", "X2", "X3",
+        ]
+        # 운용사 + 특성 키워드 둘 다 체크
+        if any(b in name for b in etf_brands) or any(k in name for k in etf_kw):
             continue
+        
+        # 3. 종목코드 기반: 한국 ETF는 코드 패턴이 다름 (5자리 시작 등)
+        # 일반 주식은 보통 0/1/2/3/4로 시작, ETF는 그 외
+        # 보수적으로 보면, 종목코드가 3으로 시작하고 명에 'KIM' 등이 있으면 ETF 가능성
         
         # 거래대금 필터 (너무 작은 종목 제외)
         if r.get("volume_value", 0) < KRX_MIN_VOLUME_VALUE:
