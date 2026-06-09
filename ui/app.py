@@ -27,8 +27,7 @@ st.set_page_config(
 st.markdown("""
 <style>
 footer {visibility: hidden;}
-[data-testid="stToolbar"], [data-testid="stDecoration"], [data-testid="stStatusWidget"],
-[data-testid="manage-app-button"],
+[data-testid="stDecoration"], [data-testid="stStatusWidget"],
 .stDeployButton, [data-testid="stAppDeployButton"],
 button[title="View fullscreen"] {display: none !important;}
 
