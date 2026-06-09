@@ -107,17 +107,17 @@ def _compute_consensus(agents: Dict) -> Dict[str, Any]:
         else:
             by_agent[k] = "강한 매도"
 
-    # 한 줄 요약
-    if buy_strong >= total * 0.6:
-        label = f"강한 매수 동의 {buy_strong}/{total}"
-    elif sell_strong >= total * 0.6:
-        label = f"강한 매도 동의 {sell_strong}/{total}"
-    elif buy_strong > sell_strong:
-        label = f"매수 우세 (강한 동의 {buy_strong}/{total})"
-    elif sell_strong > buy_strong:
-        label = f"매도 우세 (강한 동의 {sell_strong}/{total})"
+    # 한 줄 요약 - 강한 동의 N개 기준 단순화
+    if buy_strong >= 6:
+        label = f"강한 합의 (매수 {buy_strong}/{total})"
+    elif sell_strong >= 6:
+        label = f"강한 매도 합의 ({sell_strong}/{total})"
+    elif buy_strong >= 4:
+        label = f"보통 합의 (매수 {buy_strong}/{total})"
+    elif sell_strong >= 4:
+        label = f"매도 우세 ({sell_strong}/{total})"
     else:
-        label = f"의견 분산 (강한 매수 {buy_strong}, 매도 {sell_strong}, 중립 {neutral})"
+        label = f"의견 갈림 (매수 {buy_strong}, 매도 {sell_strong} / {total})"
 
     return {
         "buy_strong": buy_strong,
@@ -446,6 +446,17 @@ def evaluate(
 
     # 5. 합의도 (확신도 점수 대신)
     consensus = _compute_consensus(agents)
+
+    # 5-1. NEW: 합의 약한 매수는 강제 관망
+    # 매수/적극매수 등급인데 강한 동의가 4개 미만이면 → 관망으로 다운
+    if grade.get("level", 0) >= 3 and consensus.get("buy_strong", 0) < 4:
+        grade = {
+            "grade": "관망",
+            "emoji": "🟡",
+            "color_class": "hold",
+            "level": 2,
+            "downgraded_reason": f"합의 약함 (강한 매수 {consensus.get('buy_strong', 0)}/8, 4 미만)",
+        }
 
     # 6. 가격 (지지선 클램프)
     prices = _compute_prices(
