@@ -21,16 +21,39 @@ st.set_page_config(
     page_title="스윙 추천",
     page_icon="📈",
     layout="centered",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 st.markdown("""
 <style>
 #MainMenu, footer, header {visibility: hidden;}
 [data-testid="stToolbar"], [data-testid="stDecoration"], [data-testid="stStatusWidget"],
-[data-testid="manage-app-button"], [data-testid="stSidebarCollapsedControl"],
+[data-testid="manage-app-button"],
 .stDeployButton, [data-testid="stAppDeployButton"],
-button[title="View fullscreen"], [data-testid="collapsedControl"] {display: none !important;}
+button[title="View fullscreen"] {display: none !important;}
+
+/* 사이드바 강제 표시 - PC, 폰 모두 */
+[data-testid="stSidebar"] {
+  display: block !important;
+  visibility: visible !important;
+  transform: translateX(0px) !important;
+  margin-left: 0 !important;
+  min-width: 280px !important;
+  width: 280px !important;
+}
+[data-testid="collapsedControl"],
+[data-testid="stSidebarCollapsedControl"] {
+  display: block !important;
+  visibility: visible !important;
+  color: white !important;
+  background: #4dabf7 !important;
+  padding: 8px !important;
+  border-radius: 4px !important;
+  position: fixed !important;
+  top: 10px !important;
+  left: 10px !important;
+  z-index: 99999 !important;
+}
 
 :root {
   --bg: #0f1115; --card: #1a1d24; --text: #f4f5f7; --text-sub: #adb5bd;
@@ -158,8 +181,6 @@ if "krx_result" not in st.session_state:
     st.session_state.krx_result = None
 if "us_result" not in st.session_state:
     st.session_state.us_result = None
-if "regime" not in st.session_state:
-    st.session_state.regime = "unknown"
 
 
 # ===== 헤더 =====
@@ -199,36 +220,33 @@ st.markdown(
 
 
 # ════════════════════════════════════════════════════════════
-# 시장 국면 토글 — 버튼 4개 (라디오 대신, 클릭 잘 됨)
+# 시장 국면 토글 → 폐기. 항상 기본 가중치로 공정하게.
 # ════════════════════════════════════════════════════════════
-regime_labels = {
-    "bull": "📈 강세장",
-    "sideways": "📊 박스권",
-    "bear": "📉 약세장",
-    "unknown": "❓ 모르겠음",
-}
-current = st.session_state.regime
-current_label = regime_labels.get(current, "❓ 모르겠음")
-
-st.markdown(f"**🌐 오늘 시장 어떻게 보세요?** &nbsp;&nbsp; 현재: `{current_label}`",
-            unsafe_allow_html=True)
-
-rcol1, rcol2, rcol3, rcol4 = st.columns(4)
-options = [
-    ("bull", "📈 강세장", rcol1),
-    ("sideways", "📊 박스권", rcol2),
-    ("bear", "📉 약세장", rcol3),
-    ("unknown", "❓ 모르겠음", rcol4),
-]
-for key, label, col in options:
-    is_selected = current == key
-    btn_label = f"✓ {label}" if is_selected else label
-    if col.button(btn_label, use_container_width=True, key=f"regime_{key}"):
-        st.session_state.regime = key
-        st.rerun()
+# (이전: 사용자가 강세/약세/박스권/모름 선택. 이제 항상 'unknown' = 기본 가중치)
 
 
-st.markdown("---")
+# ===== 보유 종목 (메인 화면에 표시) =====
+ops_main = hist.get_open_positions()
+if ops_main:
+    st.markdown("### 💼 보유 종목")
+    for p in ops_main:
+        with st.expander(f"📌 {p['name']} ({p['ticker']})", expanded=False):
+            c1, c2, c3 = st.columns(3)
+            c1.metric("진입가", f"{p['entry_price']:,.0f}")
+            if p["stop_loss"]:
+                c2.metric("손절", f"{p['stop_loss']:,.0f}")
+            if p["take_profit"]:
+                c3.metric("익절", f"{p['take_profit']:,.0f}")
+            ep = st.number_input(
+                "매도가 입력",
+                value=float(p["entry_price"]),
+                key=f"main_ep_{p['ticker']}",
+            )
+            if st.button("💰 매도 처리", key=f"main_cl_{p['ticker']}", use_container_width=True):
+                hist.close_position(p["ticker"], ep)
+                st.success(f"✅ {p['name']} 매도 완료")
+                st.rerun()
+    st.markdown("---")
 
 
 # ===== 메인 버튼 =====
@@ -427,7 +445,7 @@ def render_card(result: dict, flag: str, card_idx: str):
             new_r = recommend_one(
                 Market.KRX if is_krx else Market.US,
                 held_tickers=held, excluded_tickers=excluded,
-                regime=st.session_state.regime,
+                regime="unknown",
             )
             if new_r:
                 if is_krx:
@@ -443,7 +461,7 @@ if get_btn:
     recent = hist.get_recent_tickers(3)
     with st.spinner("🇰🇷 국장 분석 중 (1~2분)..."):
         try:
-            r = recommend_one(Market.KRX, held_tickers=held, excluded_tickers=recent, regime=st.session_state.regime)
+            r = recommend_one(Market.KRX, held_tickers=held, excluded_tickers=recent, regime="unknown")
             if r:
                 st.session_state.krx_result = r
         except Exception as e:
@@ -453,7 +471,7 @@ if get_btn:
                 st.code(traceback.format_exc())
     with st.spinner("🇺🇸 미장 분석 중 (1~2분)..."):
         try:
-            r = recommend_one(Market.US, held_tickers=held, excluded_tickers=recent, regime=st.session_state.regime)
+            r = recommend_one(Market.US, held_tickers=held, excluded_tickers=recent, regime="unknown")
             if r:
                 st.session_state.us_result = r
         except Exception as e:
