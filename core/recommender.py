@@ -1,14 +1,13 @@
 """
-core/recommender.py
-통합 추천 엔진. 전체 흐름:
+core/recommender.py — v3 (옵션 B 통합)
 
-1. 자동 풀 추출 (캐시)
-2. 풀 1차 스크리닝 (간단 점수)
-3. 상위 N개에서 1개 선정 (가중 랜덤)
-4. 선정 종목 풀 분석 (시세, 일봉, 주봉, 수급, 뉴스, 매크로)
-5. 6 에이전트 평가 (병렬)
-6. 종합 판정관
-7. 검증 + 결과 반환
+변경점:
+1. market_regime_agent 호출 제거 → 사용자 토글값을 인자로 받음
+2. event_agent + pattern_agent 통합
+3. synthesizer에 indicators / earnings_date 전달 (veto 체크용)
+4. 추천 결과 자동 DB 저장
+
+기존 함수 시그니처 유지 + regime 인자 추가 (옵셔널).
 """
 import random
 import concurrent.futures
@@ -24,40 +23,39 @@ from data.macro_api import get_macro
 from data.pool_builder import build_pool, Market, PoolStock
 from data.news_api import get_news_kr, get_news_us
 from analysis.indicators import analyze_bars
-from agents import chart_agent, fundamental_agent, supply_agent, risk_agent, macro_agent, news_agent, synthesizer
-from logger import get_logger, cache_get, cache_set
-from config import TTL_AGENT_RESULT
+from agents import (
+    chart_agent, fundamental_agent, supply_agent, risk_agent,
+    macro_agent, news_agent, synthesizer,
+    event_agent, pattern_agent,  # NEW
+)
+from storage.history import save_recommendation
+from logger import get_logger
 
 log = get_logger("recommender")
 
 
 def _quick_score(stock_data: Dict) -> float:
-    """1차 스크리닝 - 간단한 차트 점수만으로 후보 추리기."""
     ind = stock_data.get("indicators", {})
     if ind.get("error"):
         return 0
-    
     chart = chart_agent.evaluate(ind)
     return chart.get("score", 0)
 
 
-def _fetch_stock_data(
-    pool_stock: PoolStock,
-    skip_weekly: bool = False,
-) -> Dict[str, Any]:
-    """종목 1개의 모든 데이터 수집."""
+def _fetch_stock_data(pool_stock: PoolStock, skip_weekly: bool = False) -> Dict[str, Any]:
     market = pool_stock.market
     ticker = pool_stock.ticker
     is_krx = market == Market.KRX
-    
+
     result = {
         "ticker": ticker,
         "name": pool_stock.name,
         "market": market.value,
         "sector": pool_stock.sector,
+        "exchange": pool_stock.exchange,
         "is_krx": is_krx,
     }
-    
+
     try:
         kis = get_kis()
         if is_krx:
@@ -85,19 +83,17 @@ def _fetch_stock_data(
                     result["weekly_indicators"] = analyze_bars(result["weekly_bars"])
                 except Exception as e:
                     log.warning(f"미장 주봉 실패 {ticker}: {e}")
-        
-        # 이름 보강
+
         if not result.get("name"):
             result["name"] = result.get("quote", {}).get("name", ticker)
     except Exception as e:
         log.error(f"데이터 수집 실패 {ticker}: {e}")
         result["error"] = str(e)
-    
+
     return result
 
 
 def _fetch_us_extras(ticker: str) -> Dict[str, Any]:
-    """미장 보강: profile, metrics, earnings"""
     try:
         fh = get_finnhub()
         return {
@@ -111,31 +107,36 @@ def _fetch_us_extras(ticker: str) -> Dict[str, Any]:
 
 
 def _run_agents(stock_data: Dict, macro_data: Dict) -> Dict[str, Any]:
-    """6 에이전트 병렬 실행."""
+    """모든 에이전트 실행 (event + pattern 포함)"""
     ind = stock_data.get("indicators", {})
     weekly_ind = stock_data.get("weekly_indicators")
     quote = stock_data.get("quote", {})
     is_krx = stock_data.get("is_krx", True)
-    
+    bars = stock_data.get("daily_bars", [])
+
     profile = stock_data.get("profile")
     metrics = stock_data.get("metrics")
     earnings = stock_data.get("earnings_date")
     investor_flow = stock_data.get("investor_flow")
     news = stock_data.get("news", [])
-    
+
     stock_info = {
         "ticker": stock_data.get("ticker"),
         "name": stock_data.get("name"),
         "market": stock_data.get("market"),
         "sector": stock_data.get("sector"),
     }
-    
+
     # 코드 기반 에이전트 (즉시 실행)
     chart_result = chart_agent.evaluate(ind, weekly_ind)
     fundamental_result = fundamental_agent.evaluate(quote, profile, metrics, is_krx)
     supply_result = supply_agent.evaluate(quote, investor_flow, ind, is_krx)
     risk_result = risk_agent.evaluate(quote, ind, earnings, is_krx)
-    
+
+    # NEW: event + pattern (코드 기반)
+    event_result = event_agent.evaluate(stock_info, earnings)
+    pattern_result = pattern_agent.evaluate(bars, ind)
+
     # AI 에이전트 병렬
     macro_result, news_result = {}, {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
@@ -143,7 +144,7 @@ def _run_agents(stock_data: Dict, macro_data: Dict) -> Dict[str, Any]:
         f_news = ex.submit(news_agent.evaluate, stock_info, news)
         macro_result = f_macro.result()
         news_result = f_news.result()
-    
+
     return {
         "chart": chart_result,
         "fundamental": fundamental_result,
@@ -151,6 +152,8 @@ def _run_agents(stock_data: Dict, macro_data: Dict) -> Dict[str, Any]:
         "news": news_result,
         "supply": supply_result,
         "risk": risk_result,
+        "event": event_result,
+        "pattern": pattern_result,
     }
 
 
@@ -159,88 +162,74 @@ def recommend_one(
     held_tickers: Optional[List[str]] = None,
     excluded_tickers: Optional[List[str]] = None,
     max_retries: int = 3,
+    regime: Optional[str] = None,  # NEW: 사용자 토글값 'bull'/'bear'/'sideways'/'unknown'
 ) -> Optional[Dict[str, Any]]:
-    """시장당 1개 추천. 관망/회피 시 최대 max_retries번까지 재시도.
-    """
     excluded = set((held_tickers or []) + (excluded_tickers or []))
-    tried_tickers = []  # 시도한 종목 추적
-    
-    last_result = None  # 마지막 결과 (전부 실패 시 폴백)
-    
+    tried_tickers = []
+    last_result = None
+
     for attempt in range(max_retries):
-        result = _recommend_one_attempt(market, excluded | set(tried_tickers))
+        result = _recommend_one_attempt(market, excluded | set(tried_tickers), regime)
         if result is None:
             continue
-        
         tried_tickers.append(result["stock_info"]["ticker"])
         last_result = result
-        
+
         grade = result.get("synthesis", {}).get("grade", "")
         if grade in ("매수", "적극매수"):
-            log.info(f"[{market.value}] ✅ 매수 등급 ({attempt+1}회 시도): {result['stock_info']['name']}")
+            log.info(f"[{market.value}] ✅ 매수 등급 ({attempt+1}회): {result['stock_info']['name']}")
             return result
         else:
             log.info(f"[{market.value}] 시도 {attempt+1}: {result['stock_info']['name']} = {grade}, 재시도")
-    
-    # 매수 못 찾으면 마지막 결과 반환
-    log.info(f"[{market.value}] {max_retries}회 시도 후 매수 등급 못 찾음, 마지막 결과 반환")
+
+    log.info(f"[{market.value}] {max_retries}회 후 매수 못 찾음, 마지막 결과 반환")
     return last_result
 
 
 def _recommend_one_attempt(
     market: Market,
     excluded: set,
+    regime: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    """1회 추천 시도"""
-    
-    # 1. 풀 추출
-    log.info(f"[{market.value}] 풀 추출 시작")
+    log.info(f"[{market.value}] 풀 추출 시작 (regime={regime})")
     pool = build_pool(market)
     if not pool:
         log.error(f"[{market.value}] 풀 비어있음")
         return None
-    
-    # 제외 종목 필터
+
     pool = [p for p in pool if p.ticker not in excluded]
     if not pool:
         log.warning(f"[{market.value}] 제외 후 풀 0")
         return None
-    
     log.info(f"[{market.value}] 풀 {len(pool)}개")
-    
-    # 2. 1차 스크리닝 - 거래대금/모멘텀 기준 상위 후보를 더 많이 가져가 차트 점수
+
     top_candidates = pool[:15]
-    
     scored = []
     for ps in top_candidates:
         d = _fetch_stock_data(ps, skip_weekly=True)
-        if d.get("error"):
-            continue
-        if d.get("indicators", {}).get("error"):
+        if d.get("error") or d.get("indicators", {}).get("error"):
             continue
         d["quick_score"] = _quick_score(d)
         scored.append(d)
-    
+
     if not scored:
         log.error(f"[{market.value}] 후보 분석 실패")
         return None
-    
-    # 3. 상위 N개 가중 랜덤
+
     scored.sort(key=lambda x: x["quick_score"], reverse=True)
     top = scored[:POOL_SELECT_TOP]
     if not top:
         return None
-    
+
     weights = [(s["quick_score"] ** 2) + 1 for s in top]
     chosen = random.choices(top, weights=weights, k=1)[0]
-    
+
     log.info(f"[{market.value}] 선정: {chosen.get('name')} ({chosen.get('ticker')}) "
              f"1차점수 {chosen['quick_score']:.1f}")
-    
-    # 4. 선정 종목 - 주봉 + 미장 extras + 뉴스 추가 수집
+
+    # 주봉 + 미장 extras 보강
     pool_stock = next((p for p in pool if p.ticker == chosen["ticker"]), None)
     if pool_stock and chosen.get("market") == "KRX":
-        # 주봉 추가
         try:
             kis = get_kis()
             chosen["weekly_bars"] = kis.domestic_weekly(chosen["ticker"], weeks=52)
@@ -256,11 +245,9 @@ def _recommend_one_attempt(
             chosen["weekly_indicators"] = analyze_bars(chosen["weekly_bars"])
         except Exception as e:
             log.warning(f"미장 주봉 보강 실패: {e}")
-        
-        # Finnhub 보강
         chosen.update(_fetch_us_extras(chosen["ticker"]))
-    
-    # 뉴스 수집
+
+    # 뉴스
     try:
         if chosen.get("market") == "KRX":
             chosen["news"] = get_news_kr(chosen["ticker"], chosen.get("name", ""))
@@ -270,19 +257,19 @@ def _recommend_one_attempt(
     except Exception as e:
         log.warning(f"뉴스 실패: {e}")
         chosen["news"] = []
-    
-    # 5. 매크로
+
+    # 매크로
     try:
         macro_data = get_macro().get_all()
     except Exception as e:
         log.warning(f"매크로 실패: {e}")
         macro_data = {}
-    
-    # 6. 6 에이전트 실행
-    log.info(f"[{market.value}] 6 에이전트 분석 시작")
+
+    # 모든 에이전트 실행 (event + pattern 포함)
+    log.info(f"[{market.value}] 8 에이전트 분석 시작 (chart/fund/macro/news/supply/risk/event/pattern)")
     agents_results = _run_agents(chosen, macro_data)
-    
-    # 7. 종합 판정관
+
+    # 종합 - regime 전달 + veto 체크용 데이터 같이 넘김
     stock_info = {
         "ticker": chosen["ticker"],
         "name": chosen.get("name", ""),
@@ -294,12 +281,16 @@ def _recommend_one_attempt(
         quote=chosen.get("quote", {}),
         agents=agents_results,
         is_krx=(chosen.get("market") == "KRX"),
+        regime=regime,
+        indicators=chosen.get("indicators", {}),
+        earnings_date=chosen.get("earnings_date"),
     )
-    
+
     log.info(f"[{market.value}] ✅ 완료: {chosen.get('name')} - "
-             f"{synthesis['grade']} ({synthesis['total_score']:.0f}점)")
-    
-    return {
+             f"{synthesis['grade']} ({synthesis['total_score']:.0f}점)"
+             + (f" [VETO: {synthesis.get('vetoed_reason')}]" if synthesis.get("vetoed_reason") else ""))
+
+    full_result = {
         "stock_info": stock_info,
         "quote": chosen.get("quote", {}),
         "indicators": chosen.get("indicators", {}),
@@ -309,4 +300,24 @@ def _recommend_one_attempt(
         "macro": macro_data,
         "news_count": len(chosen.get("news", [])),
         "earnings_date": chosen.get("earnings_date"),
+        "regime": regime,
     }
+
+    # DB 저장 (트래킹용)
+    try:
+        save_recommendation(
+            market=stock_info["market"],
+            ticker=stock_info["ticker"],
+            name=stock_info["name"],
+            sector=stock_info["sector"],
+            price=chosen.get("quote", {}).get("price", 0),
+            grade=synthesis["grade"],
+            score=synthesis["total_score"],
+            stop_loss=synthesis["prices"]["stop_loss"],
+            take_profit=synthesis["prices"]["take_profit"],
+            data=full_result,
+        )
+    except Exception as e:
+        log.warning(f"DB 저장 실패 (추천은 정상): {e}")
+
+    return full_result
