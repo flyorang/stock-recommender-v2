@@ -21,39 +21,16 @@ st.set_page_config(
     page_title="스윙 추천",
     page_icon="📈",
     layout="centered",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 st.markdown("""
 <style>
-#MainMenu, footer, header {visibility: hidden;}
+footer {visibility: hidden;}
 [data-testid="stToolbar"], [data-testid="stDecoration"], [data-testid="stStatusWidget"],
 [data-testid="manage-app-button"],
 .stDeployButton, [data-testid="stAppDeployButton"],
 button[title="View fullscreen"] {display: none !important;}
-
-/* 사이드바 강제 표시 - PC, 폰 모두 */
-[data-testid="stSidebar"] {
-  display: block !important;
-  visibility: visible !important;
-  transform: translateX(0px) !important;
-  margin-left: 0 !important;
-  min-width: 280px !important;
-  width: 280px !important;
-}
-[data-testid="collapsedControl"],
-[data-testid="stSidebarCollapsedControl"] {
-  display: block !important;
-  visibility: visible !important;
-  color: white !important;
-  background: #4dabf7 !important;
-  padding: 8px !important;
-  border-radius: 4px !important;
-  position: fixed !important;
-  top: 10px !important;
-  left: 10px !important;
-  z-index: 99999 !important;
-}
 
 :root {
   --bg: #0f1115; --card: #1a1d24; --text: #f4f5f7; --text-sub: #adb5bd;
