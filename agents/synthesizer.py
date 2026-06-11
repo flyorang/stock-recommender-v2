@@ -112,8 +112,8 @@ def _compute_consensus(agents: Dict) -> Dict[str, Any]:
         label = f"강한 합의 (매수 {buy_strong}/{total})"
     elif sell_strong >= 6:
         label = f"강한 매도 합의 ({sell_strong}/{total})"
-    elif buy_strong >= 4:
-        label = f"보통 합의 (매수 {buy_strong}/{total})"
+    elif buy_strong >= 3:
+        label = f"매수 우세 (강한 동의 {buy_strong}/{total})"
     elif sell_strong >= 4:
         label = f"매도 우세 ({sell_strong}/{total})"
     else:
@@ -145,28 +145,28 @@ def _check_contradictions_and_penalty(agents: Dict) -> Dict[str, Any]:
 
     if chart >= 75 and macro <= 30:
         warnings_list.append("⚠️ 차트 강세 vs 매크로 약세 — 함정 랠리 가능성")
-        score_penalty += 8
+        score_penalty += 4  # 8→4
 
     if chart >= 75 and supply <= 30:
         warnings_list.append("⚠️ 차트 강세 vs 수급 빠짐 — 외인/기관 빠져나가는 중")
-        score_penalty += 10
+        score_penalty += 5  # 10→5
 
     if chart >= 70 and risk <= 30:
         warnings_list.append("⚠️ 차트 강세지만 리스크 매우 높음")
-        score_penalty += 7
+        score_penalty += 3  # 7→3
 
     news_neg_flags = agents.get("news", {}).get("negative_flags", [])
     if news <= 25:
         warnings_list.append(f"⛔ 강한 악재 (뉴스 {news:.0f}점) — 매수 등급 불가")
-        score_penalty += 12
+        score_penalty += 8  # 12→8 (게이트는 유지)
         grade_cap = "hold"
     elif news <= 35 and len(news_neg_flags) >= 2:
         warnings_list.append(f"⚠️ 다수 악재 ({len(news_neg_flags)}건)")
-        score_penalty += 6
+        score_penalty += 3  # 6→3
 
     if macro <= 35 and supply <= 35:
         warnings_list.append("⚠️ 매크로 + 수급 동시 약세")
-        score_penalty += 5
+        score_penalty += 3  # 5→3
 
     return {
         "warnings": warnings_list,
@@ -293,10 +293,10 @@ def _grade_from_score(
     if alignment in ("downtrend", "perfect_downtrend") and score < 70:
         return {"grade": "비중축소", "emoji": "🟠", "color_class": "reduce", "level": 1}
 
-    if chart_score < 35:
+    if chart_score < 25:  # 35→25 (더 약한 차트만 강등)
         if score >= GRADE_THRESHOLDS["buy"]:
             return {"grade": "관망", "emoji": "🟡", "color_class": "hold", "level": 2,
-                    "downgraded_reason": "차트 점수 낮음"}
+                    "downgraded_reason": "차트 점수 매우 낮음"}
 
     if score >= GRADE_THRESHOLDS["strong_buy"]:
         grade_info = {"grade": "적극매수", "emoji": "🟢🟢", "color_class": "strong-buy", "level": 4}
@@ -448,14 +448,14 @@ def evaluate(
     consensus = _compute_consensus(agents)
 
     # 5-1. NEW: 합의 약한 매수는 강제 관망
-    # 매수/적극매수 등급인데 강한 동의가 4개 미만이면 → 관망으로 다운
-    if grade.get("level", 0) >= 3 and consensus.get("buy_strong", 0) < 4:
+    # 매수/적극매수 등급인데 강한 동의가 3 미만이면 → 관망으로 다운 (이전 4→3 완화)
+    if grade.get("level", 0) >= 3 and consensus.get("buy_strong", 0) < 3:
         grade = {
             "grade": "관망",
             "emoji": "🟡",
             "color_class": "hold",
             "level": 2,
-            "downgraded_reason": f"합의 약함 (강한 매수 {consensus.get('buy_strong', 0)}/8, 4 미만)",
+            "downgraded_reason": f"합의 약함 (강한 매수 {consensus.get('buy_strong', 0)}/8, 3 미만)",
         }
 
     # 6. 가격 (지지선 클램프)

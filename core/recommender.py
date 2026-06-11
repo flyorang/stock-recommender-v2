@@ -209,6 +209,11 @@ def _recommend_one_attempt(
         d = _fetch_stock_data(ps, skip_weekly=True)
         if d.get("error") or d.get("indicators", {}).get("error"):
             continue
+        # NEW: 5일 +15% 이상 폭등 종목 제외 (추격매수 방지)
+        ch5 = (d.get("indicators") or {}).get("change_5d_pct") or 0
+        if ch5 > 15:
+            log.info(f"  추격매수 방지 제외: {ps.ticker} 5일 +{ch5:.1f}%")
+            continue
         d["quick_score"] = _quick_score(d)
         scored.append(d)
 
